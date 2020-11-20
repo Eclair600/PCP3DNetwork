@@ -39,10 +39,10 @@ def patches_to_tensors(from_patch, to_patch):
     return torch.from_numpy(from_patch), torch.from_numpy(to_patch)
 
 def load_patches_image(from_cam, to_cam, root_dir, frame_name, from_top_LeftX, from_top_LeftY, to_top_LeftX, to_top_LeftY):
-    from_img = cv2.imread(root_dir + 'cam' + from_cam + '/' + 'frame_name')
-    to_img = cv2.imread(root_dir + 'cam' + to_cam + '/' + 'frame_name')
+    from_img = cv2.imread(root_dir + 'cam' + str(from_cam) + '/' + frame_name)
+    to_img = cv2.imread(root_dir + 'cam' + str(to_cam) + '/' + frame_name)
     from_patch = from_img[from_top_LeftX:from_top_LeftX+96, from_top_LeftY:from_top_LeftY+96]
-    to_patch = [to_top_LeftX:to_top_LeftX+96, to_top_LeftY:to_top_LeftY+96]   
+    to_patch = to_img[to_top_LeftX:to_top_LeftX+96, to_top_LeftY:to_top_LeftY+96]   
     return (from_patch, to_patch)
 
 def load_rgb_frames(image_dir, vid, start, num):
@@ -78,7 +78,7 @@ def load_flow_frames(image_dir, vid, start, num):
     return np.asarray(frames, dtype=np.float32)
 
 
-def make_dataset(split_file, split = 'train', root, mode):
+def make_dataset(split_file, mode, split = 'train'):
     count_items = 0
     dataset = []
     with open(split_file, 'r') as f:
@@ -120,15 +120,15 @@ def make_dataset(split_file, split = 'train', root, mode):
 
 class MVOR(data_utl.Dataset):
 
-    def __init__(self, split_file, split, root, mode, transforms=None):
+    def __init__(self, split_file, split, mode='spheric', transforms=None):
         
-        self.data = make_dataset(split_file, split, root, mode, snippets)
+        self.data = make_dataset(split_file, mode, split = 'train')
         self.split_file = split_file
         self.transforms = transforms
         self.mode = mode
-        self.root = root
-        self.snippets = snippets
-
+        self.root_dir = '/Users/hamoudmohamed/Desktop/MVORPartial/color/'
+        self.N = 18119
+        
     def __getitem__(self, index):
         """
         Args:
@@ -136,7 +136,7 @@ class MVOR(data_utl.Dataset):
         Returns:
             tuple: (image, target) where target is class_index of the target class.
         """
-        frameName, from_cam, to_cam, from_top_LeftX, from_top_LeftY, to_top_LeftX, to_top_LeftY, start, label = self.data[index]
+        frame_name, from_cam, to_cam, from_top_LeftX, from_top_LeftY, to_top_LeftX, to_top_LeftY, start, label = self.data[index]
         #start_f = random.randint(1,nf-65)
 
         #if self.mode == 'rgb':
@@ -144,10 +144,10 @@ class MVOR(data_utl.Dataset):
         #else:
             #imgs = load_flow_frames(self.root, vid, start, self.snippets)
         #label = label[:, :] #start_f:start_f+64]
-        from_patch, to_patch = load_patches_image(from_cam, to_cam, root_dir, frame_name, from_top_LeftX, from_top_LeftY, to_top_LeftX, to_top_LeftY)
+        from_patch, to_patch = load_patches_image(from_cam, to_cam, self.root_dir, frame_name, from_top_LeftX, from_top_LeftY, to_top_LeftX, to_top_LeftY)
         #imgs = self.transforms(imgs)
 
-        return patches_to_tensors(from_patch, to_patch), torch.from_numpy(label)
+        return patches_to_tensors(from_patch, to_patch)[0], patches_to_tensors(from_patch, to_patch)[1], torch.from_numpy(label)
 
     def __len__(self):
         return len(self.data)
@@ -164,7 +164,7 @@ class MVOR_eval(data_utl.Dataset):
         self.transforms = transforms
         self.mode = mode
         self.root = root
-        self.snippets = snippets
+        
 
     def __getitem__(self, index):
         """

@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 import tensorflow # needs to call tensorflow before torch, otherwise crush
 sys.path.append('Utils')
-#from logger import Logger
+from Utils.logger import Logger
 
 import torch
 import torch.nn as nn
@@ -19,9 +19,10 @@ from TrainingUtils import adjust_learning_rate, compute_accuracy
 
 parser = argparse.ArgumentParser(description='Train JigsawPuzzleSolver on Imagenet')
 parser.add_argument('data', type=str, help='Path to Imagenet folder')
+parser.add_argument('--split_file', default='/Users/hamoudmohamed/Desktop/MVORPartial/patchesPairCoord.txt',type=str, help='Path to pair of patches informations')
 parser.add_argument('--model', default=None, type=str, help='Path to pretrained model')
 parser.add_argument('--classes', default=1000, type=int, help='Number of permutation to use')
-parser.add_argument('--gpu', default=0, type=int, help='gpu id')
+parser.add_argument('--gpu', default=None, type=int, help='gpu id')
 parser.add_argument('--epochs', default=70, type=int, help='number of total epochs for training')
 parser.add_argument('--iter_start', default=0, type=int, help='Starting iteration count')
 parser.add_argument('--batch', default=256, type=int, help='batch size')
@@ -33,7 +34,7 @@ parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
 args = parser.parse_args()
 
 #from ImageDataLoader import DataLoader
-from JigsawImageLoader import DataLoader
+from MVOR_dataset import MVOR
 
 
 def main():
@@ -50,29 +51,30 @@ def main():
     trainpath = args.data+'/ILSVRC2012_img_train'
     if os.path.exists(trainpath+'_255x255'):
         trainpath += '_255x255'
-    train_data = DataLoader(trainpath,args.data+'/ilsvrc12_train.txt',
-                            classes=args.classes)
+    split = 'train'
+    mode = 'spheric'
+    train_data = MVOR(args.split_file, split, mode, transforms=None)
     train_loader = torch.utils.data.DataLoader(dataset=train_data,
                                             batch_size=args.batch,
                                             shuffle=True,
                                             num_workers=args.cores)
     
-    valpath = args.data+'/ILSVRC2012_img_val'
-    if os.path.exists(valpath+'_255x255'):
-        valpath += '_255x255'
-    val_data = DataLoader(valpath, args.data+'/ilsvrc12_val.txt',
-                            classes=args.classes)
-    val_loader = torch.utils.data.DataLoader(dataset=val_data,
-                                            batch_size=args.batch,
-                                            shuffle=True,
-                                            num_workers=args.cores)
+    #valpath = args.data+'/ILSVRC2012_img_val'
+    #if os.path.exists(valpath+'_255x255'):
+        #valpath += '_255x255'
+    #val_data = DataLoader(valpath, args.data+'/ilsvrc12_val.txt',
+                            #classes=args.classes)
+    #val_loader = torch.utils.data.DataLoader(dataset=val_data,
+                                            #batch_size=args.batch,
+                                            #shuffle=True,
+                                            #num_workers=args.cores)
     N = train_data.N
     
     iter_per_epoch = train_data.N/args.batch
-    print('Images: train %d, validation %d'%(train_data.N,val_data.N))
-    
+    #print('Images: train %d, validation %d'%(train_data.N,val_data.N))
+    print('Images: train %d'%(train_data.N))
     # Network initialize
-    net = Network(args.classes)
+    net = Network()
     if args.gpu is not None:
         net.cuda()
     
@@ -93,8 +95,9 @@ def main():
         if args.model is not None:
             net.load(args.model)
 
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(net.parameters(),lr=args.lr,momentum=0.9,weight_decay = 5e-4)
+    #criterion = nn.CrossEntropyLoss()
+    criterion = nn.L1Loss(reduction="none")
+    optimizer = torch.optim.SGD(net.parameters(),lr=args.lr,momentum=0.999,weight_decay = 5e-4)
     
     logger = Logger(args.checkpoint+'/train')
     logger_test = Logger(args.checkpoint+'/test')
@@ -105,7 +108,7 @@ def main():
         return
     
     ############## TRAINING ###############
-    print(('Start training: lr %f, batch size %d, classes %d'%(args.lr,args.batch,args.classes)))
+    print(('Start training: lr %f, batch size %d'%(args.lr,args.batch)))
     print(('Checkpoint: '+args.checkpoint))
     
     # Train the Model
@@ -113,38 +116,45 @@ def main():
     steps = args.iter_start
     for epoch in range(int(args.iter_start/iter_per_epoch),args.epochs):
         if epoch%10==0 and epoch>0:
-            test(net,criterion,logger_test,val_loader,steps)
+            #test(net,criterion,logger_test,val_loader,steps)
+            print('n')
         lr = adjust_learning_rate(optimizer, epoch, init_lr=args.lr, step=20, decay=0.1)
         
         end = time()
-        for i, (images, labels, original) in enumerate(train_loader):
+        for i, (patch1, patch2, labels) in enumerate(train_loader):
             batch_time.append(time()-end)
             if len(batch_time)>100:
                 del batch_time[0]
             
-            images = Variable(images)
+            patch1 = Variable(patch1)
+            patch2 = Variable(patch2)
             labels = Variable(labels)
             if args.gpu is not None:
-                images = images.cuda()
+                patch1 = patch1.cuda()
+                patch2 = patch2.cuda()
                 labels = labels.cuda()
 
             # Forward + Backward + Optimize
             optimizer.zero_grad()
             t = time()
-            outputs = net(images)
+            outputs1 = net(patch1,patch2)
+            #outputs2 = net(patch2)
             net_time.append(time()-t)
             if len(net_time)>100:
                 del net_time[0]
             
-            prec1, prec5 = compute_accuracy(outputs.cpu().data, labels.cpu().data, topk=(1, 5))
-            acc = prec1[0]
-
-            loss = criterion(outputs, labels)
+            prec1, prec5 = compute_accuracy(outputs1.cpu().data, labels.cpu().data, topk=(1, 3))
+            #acc = prec1[0]
+            acc = prec1
+            labels = labels.float()
+            
+            loss = criterion(outputs1.flatten(), labels.flatten())
+            loss = loss.mean()
             loss.backward()
             optimizer.step()
-            loss = float(loss.cpu().data.numpy())
+            
 
-            if steps%20==0:
+            if steps%2==0:
                 print(('[%2d/%2d] %5d) [batch load % 2.3fsec, net %1.2fsec], LR %.5f, Loss: % 1.3f, Accuracy % 2.2f%%' %(
                             epoch+1, args.epochs, steps, 
                             np.mean(batch_time), np.mean(net_time),
@@ -154,14 +164,14 @@ def main():
                 logger.scalar_summary('accuracy', acc, steps)
                 logger.scalar_summary('loss', loss, steps)
                 
-                original = [im[0] for im in original]
+                #original = [im[0] for im in original]
                 imgs = np.zeros([9,75,75,3])
-                for ti, img in enumerate(original):
-                    img = img.numpy()
-                    imgs[ti] = np.stack([(im-im.min())/(im.max()-im.min()) 
-                                         for im in img],axis=2)
+                #for ti, img in enumerate(original):
+                    #img = img.numpy()
+                    #imgs[ti] = np.stack([(im-im.min())/(im.max()-im.min()) 
+                                         #for im in img],axis=2)
                 
-                logger.image_summary('input', imgs, steps)
+                #logger.image_summary('input', imgs, steps)
 
             steps += 1
 
